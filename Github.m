@@ -1,6 +1,6 @@
 %% =========================================
 % MATLAB → GitHub CLEAN RESTART (AFTER .git DELETION)
-% FIXES: broken repo + large file prevention
+% FIXES: broken repo + large file prevention + push conflict
 %% =========================================
 
 %% 1. Go to project folder
@@ -39,6 +39,7 @@ cd('/Users/ehsaneqlimi/FreqShiftDynCodes')
 !git remote add origin git@github.com:EhsanEqlimi/FreqShiftDynCodes.git
 
 %% =========================================
-% 9. PUSH to GitHub
+% 9. PUSH (FIXED)
+% This solves: "remote contains work you do not have locally"
 %% =========================================
-!git push -u origin main
+!git push -u origin main --force
