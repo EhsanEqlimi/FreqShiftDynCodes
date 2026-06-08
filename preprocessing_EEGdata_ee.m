@@ -6,8 +6,9 @@ eeglab;close
 % make sure thath you ruin the following command in terminal by ee
 % open  smb://omh-smb.svc.ny.gov/OMH_Shared/NYSPI/HaegensLab
 
+% clone Jones' burst detection repo and addapth
 system('git clone https://github.com/jonescompneurolab/SpectralEvents.git');
-
+addpath(genpath(fullfile(pwd,'SpectralEvents')))
 
 % EEGpath = '/Users/juliorodriguezlarios/Desktop/Projects/categorization EEG/categorization_task_EEG';
 EEGpath = '/Volumes/HaegensLab/DATA/project_categorization/EEG/';
@@ -136,13 +137,13 @@ for s = 7:25
         OUTEEG= pop_subcomp(OUTEEG, unique(component),0);
         OUTEEG.rejected_components = length(unique(component)); %keep track of components you reject
     end
-
-
     save(strcat(path2save, temp_name, '.mat'), 'OUTEEG')
 
 
 
 end
+
+%% Burst detection based on jones repo
 
 
 
