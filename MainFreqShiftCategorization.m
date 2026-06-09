@@ -44,7 +44,7 @@ correct= nan(length(Dir),336);
 rt= nan(length(Dir),336);
 
 
-for f=2:length(Dir)
+for f=4:length(Dir)
 
     %add load EEG data and loop for subject
     load([PreProcseedDataPath Dir(f).name]);
@@ -125,6 +125,130 @@ for f=2:length(Dir)
 
 
     EEGdata(f,:,:,1:size(EEG_epoched.data,3)) =  EEG_epoched.data;
+    % apply bad trial indices
+    NumChan=size(EEG_epoched.data,1);
+    NumTime=size(EEG_epoched.data,2);
+    NumGoodTrial=numel(bad_trials(f,:)==0);
+    EpochedCatX=reshape(EEG_epoched.data,NumChan,NumTime*NumGoodTrial)'; %this is X matrix channel x time*trial (for CCA)
+    GACatY=repmat(nanmean(EEG_epoched.data(:,:,bad_trials(f,:)==0),3),[1,NumGoodTrial])'; %this is Y matrix channel x time*trial (for CCA)
+    [A,B,r,U,V]=canoncorr(GACatY,EpochedCatX); %X, Y are usually are not full-rank
+    %n_cca_all = size(R_all, 2);
+    NumComp=6;length(r);
+    CCACat=(EpochedCatX*B(:,1:NumComp))';
+
+    % Spatial patterns
+    SpatialPattern=cov(EpochedCatX)*B;
+
+
+
+    %% Re-reshape
+    CCAComps=reshape(CCACat, NumComp,NumTime,NumGoodTrial);
+    x_lim = [-200 2000];
+    pt_plot = dsearchn(EEG_epoched.times', x_lim'); % for getting the scaling right in interval of interest
+    y_lim = [-6 6];
+    hh = figure; set(gcf, 'Position', [678,233,907,647]);
+
+    for k = 1:NumComp
+        subplot(NumComp,3,k*3-2)
+        plot(EEG_epoched.times(pt_plot(1):pt_plot(2)), mean(CCAComps(k,pt_plot(1):pt_plot(2),:),3))
+        xlim(x_lim)
+        %ylim(y_lim)
+
+        subplot(NumComp,3,k*3-1)
+        imagesc(EEG_epoched.times(pt_plot(1):pt_plot(2)), linspace(1, size(CCAComps, 3), size(CCAComps, 3)),...
+            squeeze(CCAComps(k,pt_plot(1):pt_plot(2),:))');
+        colorbar; xlabel('time in ms'); ylabel('trials'); axis('xy')
+        %xlim(x_lim)
+        %caxis([-5 5])
+        caxis([-2 2])
+
+        subplot(NumComp,3,k*3)
+        topoplot(SpatialPattern(:,k), EEG_epoched.chanlocs);
+        colorbar
+    end
+    figure,
+    ShortIdx=find(bad_trials(f,:)==0 & long(f,:)==0);%1 ;
+    LongIdx=find(bad_trials(f,:)==0 & long(f,:)==1);%1 ;
+    for k=1:NumComp
+        subplot(NumComp,3,k)
+
+        plot(EEG_epoched.times(pt_plot(1):pt_plot(2)),...
+            mean(CCAComps(k,pt_plot(1):pt_plot(2),ShortIdx),3),...
+            'LineWidth',2)
+
+        hold on
+
+        plot(EEG_epoched.times(pt_plot(1):pt_plot(2)),...
+            mean(CCAComps(k,pt_plot(1):pt_plot(2),LongIdx),3),...
+            'LineWidth',2)
+
+        xlim(x_lim)
+
+        if k==1
+            legend('Short','Long')
+        end
+
+        title(['CCA Comp ' num2str(k)])
+    end
+
+    %% LDA calssifier
+    Labels=bad_trials(f,:)==0 & long(f,:)==1;%1 long zero short
+    CompIdx=1:3;
+
+    Win1=EEG_epoched.times>=150 & EEG_epoched.times<=300;
+    Win2=EEG_epoched.times>=300 & EEG_epoched.times<=600;
+    Win3=EEG_epoched.times>=600 & EEG_epoched.times<=1000;
+
+    NumTrial=size(CCAComps,3);
+
+    Features=[];
+
+    for Tr=1:NumTrial
+
+        FeatureVec=[];
+
+        for Comp=CompIdx
+
+            FeatureVec=[FeatureVec ...
+                mean(CCAComps(Comp,Win1,Tr)) ...
+                mean(CCAComps(Comp,Win2,Tr)) ...
+                mean(CCAComps(Comp,Win3,Tr))];
+
+        end
+
+        Features(Tr,:)=FeatureVec;
+
+    end
+
+    Mdl=fitcdiscr(Features,Labels);
+
+    CVMdl=crossval(Mdl,'KFold',10);
+
+    Accuracy=1-kfoldLoss(CVMdl);
+
+    fprintf('Accuracy=%.2f%%\n',100*Accuracy);
+    [~,Score]=resubPredict(Mdl);
+
+    LDAScore=Score(:,2);
+    figure
+
+    subplot(1,2,1)
+
+    histogram(LDAScore(Labels==0))
+    hold on
+    histogram(LDAScore(Labels==1))
+
+    xlabel('LDA score')
+    ylabel('Count')
+    legend('Short','Long')
+
+    subplot(1,2,2)
+
+    boxplot(LDAScore,Labels)
+
+    ylabel('LDA score')
+    xticklabels({'Short','Long'})
+
     %% eeglab spectopo (averaged over trial/epoch)
     EpochLength=size(EEG_epoched.data,2);
     Fs=EEG_epoched.srate;
@@ -249,135 +373,135 @@ for f=2:length(Dir)
     % f	frequency vector
     % Assumes: f, Ctot, Cvec, Cent already exist
 
-figure('Color','w','Position',[100 100 900 600]);
+    figure('Color','w','Position',[100 100 900 600]);
 
-tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+    tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
 
-% Optional: colorblind-friendly paletteß
-c1 = [0 0.4470 0.7410];
-c2 = [0.8500 0.3250 0.0980];
-c3 = [0.4660 0.6740 0.1880];
+    % Optional: colorblind-friendly paletteß
+    c1 = [0 0.4470 0.7410];
+    c2 = [0.8500 0.3250 0.0980];
+    c3 = [0.4660 0.6740 0.1880];
 
-% ---------- Ctot ----------
-nexttile
-plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
-grid on
-box off
-ylabel('C_{tot}')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Ctot ----------
+    nexttile
+    plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+    grid on
+    box off
+    ylabel('C_{tot}')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% % ---------- Cvec ----------
-% nexttile
-% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
-% grid on
-% box off
-% ylabel('C_{vec}')
-% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % % ---------- Cvec ----------
+    % nexttile
+    % plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+    % grid on
+    % box off
+    % ylabel('C_{vec}')
+    % set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% ---------- Cent ----------
-nexttile
-plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
-grid on
-box off
-ylabel('C_{ent}')
-xlabel('Frequency (Hz)')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Cent ----------
+    nexttile
+    plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+    grid on
+    box off
+    ylabel('C_{ent}')
+    xlabel('Frequency (Hz)')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% Global title
-sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
+    % Global title
+    sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
 
 
-% long(f,:)==1
-% [Sc, Cmat, Ctot, Cvec, Cent, f] = CrossSpecMatc(EEGPerm, win, params);
+    % long(f,:)==1
+    % [Sc, Cmat, Ctot, Cvec, Cent, f] = CrossSpecMatc(EEGPerm, win, params);
 
-[~,idx] = min(abs(f-33));
-figure,topoplot(abs(Cvec(idx,:)),OUTEEG.chanlocs);
+    [~,idx] = min(abs(f-33));
+    figure,topoplot(abs(Cvec(idx,:)),OUTEEG.chanlocs);
 
-EEGPermLong=permute(EEG(:,:,find(long(f,:)==1)),[2,1,3]);
-[Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermLong,win,params);
+    EEGPermLong=permute(EEG(:,:,find(long(f,:)==1)),[2,1,3]);
+    [Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermLong,win,params);
     %  Sc	cross-spectral matrix (channels × channels × freq)
 
-figure('Color','w','Position',[100 100 900 600]);
+    figure('Color','w','Position',[100 100 900 600]);
 
-tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+    tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
 
-% Optional: colorblind-friendly paletteß
-c1 = [0 0.4470 0.7410];
-c2 = [0.8500 0.3250 0.0980];
-c3 = [0.4660 0.6740 0.1880];
+    % Optional: colorblind-friendly paletteß
+    c1 = [0 0.4470 0.7410];
+    c2 = [0.8500 0.3250 0.0980];
+    c3 = [0.4660 0.6740 0.1880];
 
-% ---------- Ctot ----------
-nexttile
-plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
-grid on
-box off
-ylabel('C_{tot}')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Ctot ----------
+    nexttile
+    plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+    grid on
+    box off
+    ylabel('C_{tot}')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% % ---------- Cvec ----------
-% nexttile
-% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
-% grid on
-% box off
-% ylabel('C_{vec}')
-% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % % ---------- Cvec ----------
+    % nexttile
+    % plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+    % grid on
+    % box off
+    % ylabel('C_{vec}')
+    % set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% ---------- Cent ----------
-nexttile
-plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
-grid on
-box off
-ylabel('C_{ent}')
-xlabel('Frequency (Hz)')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Cent ----------
+    nexttile
+    plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+    grid on
+    box off
+    ylabel('C_{ent}')
+    xlabel('Frequency (Hz)')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% Global title
-sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
-
-
+    % Global title
+    sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
 
 
-EEGPermShort=permute(EEG(:,:,find(long(f,:)==0)),[2,1,3]);
-[Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermShort,win,params);
+
+
+    EEGPermShort=permute(EEG(:,:,find(long(f,:)==0)),[2,1,3]);
+    [Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermShort,win,params);
     %  Sc	cross-spectral matrix (channels × channels × freq)
 
 
     figure('Color','w','Position',[100 100 900 600]);
 
-tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+    tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
 
-% Optional: colorblind-friendly paletteß
-c1 = [0 0.4470 0.7410];
-c2 = [0.8500 0.3250 0.0980];
-c3 = [0.4660 0.6740 0.1880];
+    % Optional: colorblind-friendly paletteß
+    c1 = [0 0.4470 0.7410];
+    c2 = [0.8500 0.3250 0.0980];
+    c3 = [0.4660 0.6740 0.1880];
 
-% ---------- Ctot ----------
-nexttile
-plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
-grid on
-box off
-ylabel('C_{tot}')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Ctot ----------
+    nexttile
+    plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+    grid on
+    box off
+    ylabel('C_{tot}')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% % ---------- Cvec ----------
-% nexttile
-% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
-% grid on
-% box off
-% ylabel('C_{vec}')
-% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % % ---------- Cvec ----------
+    % nexttile
+    % plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+    % grid on
+    % box off
+    % ylabel('C_{vec}')
+    % set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% ---------- Cent ----------
-nexttile
-plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
-grid on
-box off
-ylabel('C_{ent}')
-xlabel('Frequency (Hz)')
-set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+    % ---------- Cent ----------
+    nexttile
+    plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+    grid on
+    box off
+    ylabel('C_{ent}')
+    xlabel('Frequency (Hz)')
+    set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
 
-% Global title
-sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
+    % Global title
+    sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
 
 
 end
