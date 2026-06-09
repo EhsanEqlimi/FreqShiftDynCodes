@@ -1,5 +1,5 @@
-% Main code for the categorization task while recording human EEG.
-% This dataset and task were used in a published paperIEli et al, iScience, 2025). The aim is to
+% Main code for the temporal categorization task while recording human EEG.
+% This dataset and task were used in a published paper Eli, iScience, 2025 and Julio -PeerJ). The aim is to
 % take preprocessed data, perform epoching, and then apply further analyses.
 % For example, my approach is to examine inter-trial variability in beta frequency.
 % In addition, other time windows can be considered, such as those related to
@@ -34,7 +34,7 @@ delaystart = {'S101','S102','S103', 'S104', 'S105', 'S106','S107','S108',...
 test_durations = [0.2 0.250 0.319 0.331 0.369 0.381 0.450 0.5;...
     0.45 0.5 0.619 0.669 0.706 0.756 0.870 0.920;...ß
     0.870 0.920 0.981 1.169 1.231 1.419 1.470 1.520];
-% EEGdat--> channel x time x trial 
+% EEGdat--> channel x time x trial
 EEGdata = nan(length(Dir), 96,  550,  336);
 bad_trials = nan(length(Dir),336);
 block_type= nan(length(Dir),336);
@@ -44,7 +44,7 @@ correct= nan(length(Dir),336);
 rt= nan(length(Dir),336);
 
 
-for f=1:length(Dir)
+for f=2:length(Dir)
 
     %add load EEG data and loop for subject
     load([PreProcseedDataPath Dir(f).name]);
@@ -109,7 +109,7 @@ for f=1:length(Dir)
     end
 
 
-    %% epoching for investigating the delay window 
+    %% epoching for investigating the delay window
     [EEG_epoched, indices] = pop_epoch( OUTEEG, delaystart, [-0.2 2]);
 
     %mark bad epochs
@@ -130,13 +130,13 @@ for f=1:length(Dir)
     Fs=EEG_epoched.srate;
     WinSize=EpochLength;% Fs*2; %samples
     NFFT=2.0 ^(ceil(log2(WinSize)));
-    FOI=[2 40]; %beta
+    FOI=[1 40]; %beta
     figure,
     [Spec,Freq]=spectopo(EEG_epoched.data, 0, Fs,'nfft',NFFT, 'winsize',WinSize,...
         'overlap',0,'freqrange',FOI,'wintype','hamming');
     %Note: spectopo is 10log10​(power) (aka db)
 
-       %plot  PSD
+    %plot  PSD
     figure;
     plot(Freq,Spec');
     xlabel('Frequency (Hz)');
@@ -151,11 +151,11 @@ for f=1:length(Dir)
     logF=log10(FreqSel);
     SpecSel=Spec(:,FitIdx)/10; % convert dB → log10(power)
     for Ch=1:size(SpecSel,1) %channel loop
-    ChannelPower=SpecSel(Ch,:)'; %no need to log10 (spectopo is db)
-    Powfitted=polyfit(logF,ChannelPower,1);
-    AperiodicFit = polyval(Powfitted,logF);
-    SpecFlat(:,Ch) = ChannelPower-AperiodicFit;
-    Alpha(Ch)=-Powfitted(1);
+        ChannelPower=SpecSel(Ch,:)'; %no need to log10 (spectopo is db)
+        Powfitted=polyfit(logF,ChannelPower,1);
+        AperiodicFit = polyval(Powfitted,logF);
+        SpecFlat(:,Ch) = ChannelPower-AperiodicFit;
+        Alpha(Ch)=-Powfitted(1);
 
     end
     %plot falttend PSD
@@ -167,7 +167,7 @@ for f=1:length(Dir)
     xlim([2 40]);
 
 
-       %plot falttend PSD
+    %plot falttend PSD
     figure;
     plot(FreqSel,SpecFlat');
     xlabel('Frequency (Hz)');
@@ -183,7 +183,7 @@ for f=1:length(Dir)
     %PLV
     Params.itc=0;
     [PLV,SelFreqs]=FnMultiTaperFreqPLV(EEG,Params);
-      figure;
+    figure;
     plot(SelFreqs,mean(PLV,1), 'k', 'LineWidth', 2);
     xlabel('Frequency (Hz)');
     ylabel('PLV');
@@ -222,12 +222,12 @@ for f=1:length(Dir)
     %% Chronux
     S=[];
     params = struct( ...
-    'Fs', Fs, ...
-    'tapers', [2 3], ...
-    'fpass', [1 40], ...
-    'pad', 2, ...
-    'trialave', 1 ...
-);
+        'Fs', Fs, ...
+        'tapers', [2 3], ...
+        'fpass', [1 40], ...
+        'pad', 2, ...
+        'trialave', 1 ...
+        );
     for Ch=1:size(EEG,1)
         Data=squeeze(EEG(Ch,:,:));   % time*trial
         [S(Ch,:),freqChron]=mtspectrumc(Data, params);
@@ -240,44 +240,144 @@ for f=1:length(Dir)
     %%
     win=2.2 ;   % full epoch length = 550 sample
     EEGPerm=permute(EEG,[2,1,3]);
-    [Sc, Cmat, Ctot, Cvec, Cent, f] = CrossSpecMatc(EEGPerm, win, params);
+    [Sc, Cmat, Ctot, Cvec, Cent, fr] = CrossSpecMatc(EEGPerm, win, params);
     %  Sc	cross-spectral matrix (channels × channels × freq)
     % Cmat	coherence matrix (freq-resolved)
     % Ctot	total coherence
     % Cvec	vectorized coherence (for stats)
     % Cent	centered coherence
     % f	frequency vector
-    %It measures: Do two channels keep a stable phase relationship across trials at each frequency?
-    figure;
-    % Ctot
-    if ndims(Ctot) == 2 && size(Ctot,1) == 1 || size(Ctot,2) == 1
-        plot(f, Ctot(:), 'LineWidth', 2);
-    else
-        plot(f, squeeze(mean(mean(Ctot,1),2)), 'LineWidth', 2);
-    end
+    % Assumes: f, Ctot, Cvec, Cent already exist
 
-    % Cvec
-    figure,
-    if ndims(Cvec) == 2 && (size(Cvec,1) == 1 || size(Cvec,2) == 1)
-        plot(f, abs(Cvec(:)), 'LineWidth', 2);
-    else
-        plot(f, squeeze(mean(abs(Cvec),2)), 'LineWidth', 2);
-    end
+figure('Color','w','Position',[100 100 900 600]);
 
-    % Cent
-    if ndims(Cent) == 2 && (size(Cent,1) == 1 || size(Cent,2) == 1)
-        plot(f, Cent(:), 'LineWidth', 2);
-    else
-        plot(f, squeeze(mean(mean(Cent,1),2)), 'LineWidth', 2);
-    end
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
 
-    xlabel('Frequency (Hz)');
-    ylabel('Coherence');
-    legend('Ctot','Cvec','Cent');
-    title('Cross-Spectral Coherence Measures');
-    grid on;
-    %% fieldtrip fft
- 
+% Optional: colorblind-friendly paletteß
+c1 = [0 0.4470 0.7410];
+c2 = [0.8500 0.3250 0.0980];
+c3 = [0.4660 0.6740 0.1880];
+
+% ---------- Ctot ----------
+nexttile
+plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+grid on
+box off
+ylabel('C_{tot}')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% % ---------- Cvec ----------
+% nexttile
+% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+% grid on
+% box off
+% ylabel('C_{vec}')
+% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% ---------- Cent ----------
+nexttile
+plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+grid on
+box off
+ylabel('C_{ent}')
+xlabel('Frequency (Hz)')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% Global title
+sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
+
+
+% long(f,:)==1
+% [Sc, Cmat, Ctot, Cvec, Cent, f] = CrossSpecMatc(EEGPerm, win, params);
+
+[~,idx] = min(abs(f-33));
+figure,topoplot(abs(Cvec(idx,:)),OUTEEG.chanlocs);
+
+EEGPermLong=permute(EEG(:,:,find(long(f,:)==1)),[2,1,3]);
+[Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermLong,win,params);
+    %  Sc	cross-spectral matrix (channels × channels × freq)
+
+figure('Color','w','Position',[100 100 900 600]);
+
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+
+% Optional: colorblind-friendly paletteß
+c1 = [0 0.4470 0.7410];
+c2 = [0.8500 0.3250 0.0980];
+c3 = [0.4660 0.6740 0.1880];
+
+% ---------- Ctot ----------
+nexttile
+plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+grid on
+box off
+ylabel('C_{tot}')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% % ---------- Cvec ----------
+% nexttile
+% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+% grid on
+% box off
+% ylabel('C_{vec}')
+% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% ---------- Cent ----------
+nexttile
+plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+grid on
+box off
+ylabel('C_{ent}')
+xlabel('Frequency (Hz)')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% Global title
+sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
+
+
+
+
+EEGPermShort=permute(EEG(:,:,find(long(f,:)==0)),[2,1,3]);
+[Sc, Cmat, Ctot, Cvec, Cent, fr]=CrossSpecMatc(EEGPermShort,win,params);
+    %  Sc	cross-spectral matrix (channels × channels × freq)
+
+
+    figure('Color','w','Position',[100 100 900 600]);
+
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+
+% Optional: colorblind-friendly paletteß
+c1 = [0 0.4470 0.7410];
+c2 = [0.8500 0.3250 0.0980];
+c3 = [0.4660 0.6740 0.1880];
+
+% ---------- Ctot ----------
+nexttile
+plot(fr, Ctot, 'LineWidth', 2.5, 'Color', c1);
+grid on
+box off
+ylabel('C_{tot}')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% % ---------- Cvec ----------
+% nexttile
+% plot(nanmean(abs(Cvec),1), 'LineWidth', 2.5, 'Color', c2);
+% grid on
+% box off
+% ylabel('C_{vec}')
+% set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% ---------- Cent ----------
+nexttile
+plot(fr, Cent, 'LineWidth', 2.5, 'Color', c3);
+grid on
+box off
+ylabel('C_{ent}')
+xlabel('Frequency (Hz)')
+set(gca,'FontSize',12,'LineWidth',1.2,'TickDir','out')
+
+% Global title
+sgtitle('Cross-Spectral Coherence Measures','FontSize',14,'FontWeight','bold')
 
 
 end
