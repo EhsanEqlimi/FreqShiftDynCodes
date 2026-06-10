@@ -122,7 +122,219 @@ for f=4:length(Dir)
     co_erp_short(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==1 & bad_trials(f,:)==0 & long(f,:)==0),3);
     inco_erp_long(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==0 & bad_trials(f,:)==0 & long(f,:)==1),3);
     inco_erp_short(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==0 & bad_trials(f,:)==0 & long(f,:)==0),3);
+%%
+%%=========================================================
+% BETA FILTER
+%%=========================================================
+%EEG -> [NTrials x NChannels x NTimes]
+EEGDat=permute(EEG_epoched.data,[3,1,2]);
+[NTrials,NChannels,NTimes]=size(EEGDat);
+Fs=EEG_epoched.srate;
+BetaBand=[13,36];
+NComponents=3;
+[B,A]=butter(4,BetaBand/(EEG_epoched.srate/2),'bandpass');
+NTrails=size(EEG_epoched,3);
+EEGBeta=zeros(size(EEGDat));
 
+for ITrial=1:NTrials
+
+    Trial=double(squeeze(EEGDat(ITrial,:,:)));
+
+    EEGBeta(ITrial,:,:)=filtfilt(B,A,Trial')';
+
+end
+
+%%=========================================================
+% SINGLE-TRIAL COVARIANCE
+%%=========================================================
+
+Covs=zeros(NChannels,NChannels,NTrials);
+
+for ITrial=1:NTrials
+
+    X=squeeze(EEGBeta(ITrial,:,:));
+
+    C=cov(X');
+
+    % regularization
+    C=C+1e-6*eye(size(C));
+
+    Covs(:,:,ITrial)=C;
+
+end
+
+
+%%=========================================================
+% SUBSPACE EXTRACTION
+%%=========================================================
+
+Subspaces=cell(NTrials,1);
+
+for ITrial=1:NTrials
+
+    C=Covs(:,:,ITrial);
+
+    [V,D]=eig(C);
+
+    [~,Idx]=sort(diag(D),'descend');
+
+    V=V(:,Idx);
+
+    U=V(:,1:NComponents);
+
+    Subspaces{ITrial}=U;
+
+end
+
+
+%%=========================================================
+% GRASSMANN DISTANCE MATRIX
+%%=========================================================
+
+DGrass=zeros(NTrials);
+
+for ITrial=1:NTrials
+
+    U1=Subspaces{ITrial};
+
+    for JTrial=1:NTrials
+
+        U2=Subspaces{JTrial};
+
+        Angle=subspace(U1,U2);
+
+        DGrass(ITrial,JTrial)=Angle;
+
+    end
+end
+
+
+%%=========================================================
+% RIEMANNIAN DISTANCE MATRIX
+%%=========================================================
+
+DRiem=zeros(NTrials);
+
+for ITrial=1:NTrials
+
+    C1=Covs(:,:,ITrial);
+
+    for JTrial=1:NTrials
+
+        C2=Covs(:,:,JTrial);
+
+        EigVals=eig(C1\C2);
+
+        DRiem(ITrial,JTrial)=sqrt(sum(log(EigVals).^2));
+
+    end
+end
+
+
+%%=========================================================
+% MANIFOLD VISUALIZATION
+%%=========================================================
+% enforce symmetry
+DGrass=(DGrass+DGrass')/2;
+
+% enforce diagonal = 0
+for ITrial=1:NTrials
+    DGrass(ITrial,ITrial)=0;
+end
+
+% remove NaN / Inf
+DGrass(~isfinite(DGrass))=0;
+
+% ensure non-negative
+DGrass(DGrass<0)=0;
+
+% optional: enforce double precision
+DGrass=double(DGrass);
+Y=mdscale(DGrass,2);
+
+figure;
+
+scatter(Y(:,1),Y(:,2),80,'filled');
+
+xlabel('Dim 1');
+ylabel('Dim 2');
+
+title('Beta Subspace Geometry');
+
+grid on;
+
+
+%%=========================================================
+% CLUSTERING
+%%=========================================================
+
+NClusters=3;
+
+ClusterIdx=kmeans(Y,NClusters);
+
+figure;
+
+gscatter(Y(:,1),Y(:,2),ClusterIdx);
+
+xlabel('Dim 1');
+ylabel('Dim 2');
+
+title('Beta State Clusters');
+
+grid on;
+
+
+%%=========================================================
+% INTER-TRIAL VARIABILITY
+%%=========================================================
+
+Variability=mean(DGrass,2);
+
+figure;
+
+plot(Variability,'LineWidth',2);
+
+xlabel('Trial');
+
+ylabel('Variability');
+
+title('Inter-Trial Beta Variability');
+
+grid on;
+
+
+%%=========================================================
+% ROOT-MUSIC PER TRIAL
+%%=========================================================
+
+BetaPeaks=zeros(NTrials,1);
+
+for ITrial=1:NTrials
+
+    X=squeeze(EEGBeta(ITrial,3,:));
+
+    [S,F]=pmusic(X,4,[],Fs);
+
+    BetaIdx=find(F>=15 & F<=30);
+
+    [~,MaxIdx]=max(S(BetaIdx));
+
+    BetaPeaks(ITrial)=F(BetaIdx(MaxIdx));
+
+end
+
+
+figure;
+
+histogram(BetaPeaks);
+
+xlabel('Beta Peak Frequency');
+
+ylabel('Count');
+
+title('Trial-wise Beta Peaks');
+
+   %%CCA
 
     EEGdata(f,:,:,1:size(EEG_epoched.data,3)) =  EEG_epoched.data;
     % apply bad trial indices
