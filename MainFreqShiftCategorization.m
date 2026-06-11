@@ -32,7 +32,7 @@ delaystart = {'S101','S102','S103', 'S104', 'S105', 'S106','S107','S108',...
 % (T1, T2, T3,). Each block contains 8 numbers: the first four correspond...
 % to the short category, and the last four correspond to the long category.
 test_durations = [0.2 0.250 0.319 0.331 0.369 0.381 0.450 0.5;...
-    0.45 0.5 0.619 0.669 0.706 0.756 0.870 0.920;...ß
+    0.45 0.5 0.619 0.669 0.706 0.756 0.870 0.920;...
     0.870 0.920 0.981 1.169 1.231 1.419 1.470 1.520];
 % EEGdat--> channel x time x trial
 EEGdata = nan(length(Dir), 96,  550,  336);
@@ -42,6 +42,61 @@ duration= nan(length(Dir),336);
 long= nan(length(Dir),336);
 correct= nan(length(Dir),336);
 rt= nan(length(Dir),336);
+
+%% Test for Emina
+% load([PreProcseedDataPath '10_C10M2_ft.mat']);
+% Data_Test=[];
+% PSD_mean=[];
+% for t=1:length(data_ft.trial)
+%     Data_Test(:,:,t)=data_ft.trial{t};
+% end
+% x_mean = mean(Data_Test,3);   % channel × time
+% fs=data_ft.fsample;
+% 
+% for ch = 1:size(x_mean,1)
+%     [PSD_mean(:,ch), F] = pwelch(x_mean(ch,:), [], [], [], fs);
+% end
+% % Keep only 2-40 Hz
+% idx = F >= 2 & F <= 40;
+% 
+% F = F(idx);
+% PSD_mean = PSD_mean(idx,:);
+% figure,plot(F,PSD_mean)
+% figure,plot(SpecSel)
+% 
+% % 1/f effect (simple log-log)
+% %Note:% Computed PSD for each epoch, average across epochs (via spectopo), then fit/remove 1/f
+% % (preferred over fitting 1/f separately for each epoch)
+% %     FitIdx=Freq >= 2 & Freq <= 40;
+% logF=log10(F);
+% SpecFlat=[];
+% SpecSel=log10(PSD_mean); % convert dB → log10(power)
+% for Ch=1:size(PSD_mean,2) %channel loop
+%     ChannelPower=SpecSel(:,Ch); %no need to log10 (spectopo is db)
+%     Powfitted=polyfit(logF,ChannelPower,1);
+%     AperiodicFit = polyval(Powfitted,logF);
+%     SpecFlat(:,Ch) = ChannelPower-AperiodicFit;
+%     Alpha(Ch)=-Powfitted(1);
+% 
+% end
+% 
+% %plot falttend PSD
+% figure;
+% plot(F,SpecFlat);
+% xlabel('Frequency (Hz)');
+% ylabel('Power (dB, corrected)');
+% title('Flattened Spectrum');
+% xlim([2 40]);
+% 
+% 
+% %plot falttend PSD
+% figure;
+% plot(FreqSel,SpecFlat');
+% xlabel('Frequency (Hz)');
+% ylabel('Power (dB, corrected)');
+% title('Flattened Spectrum');
+% xlim([2 40]);
+%% End test for Emina (mice dta and 1/f effect, 9 June 2026)
 
 
 for f=4:length(Dir)
@@ -122,219 +177,443 @@ for f=4:length(Dir)
     co_erp_short(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==1 & bad_trials(f,:)==0 & long(f,:)==0),3);
     inco_erp_long(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==0 & bad_trials(f,:)==0 & long(f,:)==1),3);
     inco_erp_short(f,:,:) = mean(EEG_epoched.data(:,:,correct(f,:)==0 & bad_trials(f,:)==0 & long(f,:)==0),3);
-%%
-%%=========================================================
-% BETA FILTER
-%%=========================================================
-%EEG -> [NTrials x NChannels x NTimes]
-EEGDat=permute(EEG_epoched.data,[3,1,2]);
-[NTrials,NChannels,NTimes]=size(EEGDat);
-Fs=EEG_epoched.srate;
-BetaBand=[13,36];
-NComponents=3;
-[B,A]=butter(4,BetaBand/(EEG_epoched.srate/2),'bandpass');
-NTrails=size(EEG_epoched,3);
-EEGBeta=zeros(size(EEGDat));
 
-for ITrial=1:NTrials
+    %% 10 June Idea
+    %% =========================
+    %  INTER-TRIAL BETA VARIABILITY PIPELINE
+    %  NO GED, NO HMM, NO GA-CCA
+    %% =========================
 
-    Trial=double(squeeze(EEGDat(ITrial,:,:)));
+  
 
-    EEGBeta(ITrial,:,:)=filtfilt(B,A,Trial')';
+    %% -------------------------
+    % INPUT DATA
+    % X: trials x channels x time
+    %% -------------------------
 
-end
+    % Example placeholders (replace with your data)
+    % X = randn(nTrials, nCh, nTime);
+    X=double(permute(EEG_epoched.data,[3,1,2]));
 
-%%=========================================================
-% SINGLE-TRIAL COVARIANCE
-%%=========================================================
+    [nTrials, nCh, nTime] = size(X);
+    Fs = 250;
 
-Covs=zeros(NChannels,NChannels,NTrials);
+    %% -------------------------
+    % STEP 1: BANDPASS FILTER (BETA)
+    %% -------------------------
 
-for ITrial=1:NTrials
+    bp = [13 30];
+    [b,a] = butter(4, bp/(Fs/2), 'bandpass');
 
-    X=squeeze(EEGBeta(ITrial,:,:));
+    Xf = zeros(size(X));
 
-    C=cov(X');
+    for i = 1:nTrials
+        for ch = 1:nCh
+            Xf(i,ch,:) = filtfilt(b,a,squeeze(X(i,ch,:)));
+        end
+    end
 
-    % regularization
-    C=C+1e-6*eye(size(C));
+    %% -------------------------
+    % STEP 2: PCA SPATIAL REDUCTION
+    % (NO GED, NO TEMPLATE)
+    %% -------------------------
+% Assumes data is loaded as a 3D matrix: [channels x time x trials] 
+% For example: [nChans, nTimes, nTrials] = size(EEG_Data);
 
-    Covs(:,:,ITrial)=C;
+% Step 1: Reshape data to 2D (Channels x all time points/trials)
+% Concatenate trials/time to preserve the spatial characteristics
+Xf=permute(X,[2,3,1]);
+[nChans, nTimes, nTrials] = size(Xf);
+data2D = reshape(Xf, nChans, nTimes * nTrials);
 
-end
+% Step 2: Zero-center the data across channels
+mean_data = mean(data2D, 2);
+data_centered = data2D - mean_data;
 
+% Step 3: Compute the spatial covariance matrix
+% The covariance of the channels
+covMatrix = (1 / (size(data_centered, 2) - 1)) * data_centered * data_centered';
 
-%%=========================================================
-% SUBSPACE EXTRACTION
-%%=========================================================
+% Step 4: Perform Eigenvalue Decomposition
+[V, D] = eig(covMatrix);
 
-Subspaces=cell(NTrials,1);
+% Step 5: Sort eigenvalues in descending order and flip eigenvectors accordingly
+[eigenvalues, sortIdx] = sort(diag(D), 'descend');
+V_sorted = V(:, sortIdx);
 
-for ITrial=1:NTrials
+% Step 6: Project data (Spatial Filters)
+% Create spatial filters using the top eigenvectors (e.g., top 5)
+num_components = 5;
+spatial_filters = V_sorted(:, 1:num_components);
 
-    C=Covs(:,:,ITrial);
+% Project original data into the new PCA space
+pca_time_series = spatial_filters' * data2D;
 
-    [V,D]=eig(C);
+% Reshape back into components x time x trials to evaluate the ERP
+pca_components = reshape(pca_time_series, num_components, nTimes, nTrials);
 
-    [~,Idx]=sort(diag(D),'descend');
+% (Optional) Scree plot to visualize variance explained
+variance_explained = (eigenvalues / sum(eigenvalues)) * 100;
+figure;
+plot(variance_explained(1:20), 'ko-', 'LineWidth', 2);
+title('Scree Plot of Spatial PCA Components');
+xlabel('Component Number');
+ylabel('Percentage of Variance Explained');
+disp(size(pca_components))  % should be nTrials × K × nTime
+Xpca=pca_components;
+K=num_components;
+    %% -------------------------
+    % STEP 3: SLIDING WINDOWS
+    %% -------------------------
 
-    V=V(:,Idx);
+    win  = round(0.4 * Fs);
+    step = round(0.05 * Fs);
 
-    U=V(:,1:NComponents);
+    tIdx = 1:step:(nTime-win);
+    nWin = length(tIdx);
 
-    Subspaces{ITrial}=U;
+    %% -------------------------
+    % STEP 4: FREQUENCY ESTIMATION (MUSIC-LIKE PEAK)
+    %% -------------------------
 
-end
+    fgrid = 13:0.1:30;
 
+    f_est = zeros(nTrials, nWin);
 
-%%=========================================================
-% GRASSMANN DISTANCE MATRIX
-%%=========================================================
+    for i = 1:nTrials
 
-DGrass=zeros(NTrials);
+        Xi = squeeze(Xpca(i,:,:)); % K x time
 
-for ITrial=1:NTrials
+        for w = 1:nWin
 
-    U1=Subspaces{ITrial};
+            seg = Xi(:, tIdx(w):tIdx(w)+win-1);
 
-    for JTrial=1:NTrials
+            % covariance
+            R = (seg * seg') / size(seg,2);
 
-        U2=Subspaces{JTrial};
+            % eigen decomposition
+            [E,D] = eig(R);
+            [~,idx] = sort(diag(D),'descend');
+            E = E(:,idx);
 
-        Angle=subspace(U1,U2);
+            En = E(:,2:end); % noise subspace (1 dominant source assumption)
 
-        DGrass(ITrial,JTrial)=Angle;
+            P = zeros(length(fgrid),1);
+
+            for k = 1:length(fgrid)
+
+                f = fgrid(k);
+
+                % steering vector (simplified multichannel surrogate)
+                t = (0:size(seg,2)-1)/Fs;
+                a = exp(-1j*2*pi*f*t);
+                a = repmat(a, K, 1);
+                a = a(:);
+
+                P(k) = 1 / abs(a' * (En*En') * a);
+            end
+
+            [~,ix] = max(P);
+            f_est(i,w) = fgrid(ix);
+
+        end
+    end
+
+    %% -------------------------
+    % STEP 5: BUILD DISTRIBUTION p(f|t)
+    %% -------------------------
+
+    fgrid_pdf = 13:0.1:30;
+    p = zeros(length(fgrid_pdf), nWin);
+
+    for w = 1:nWin
+
+        data = f_est(:,w);
+
+        p(:,w) = ksdensity(data, fgrid_pdf);
 
     end
-end
 
+    %% normalize
+    for w = 1:nWin
+        p(:,w) = p(:,w) / sum(p(:,w));
+    end
 
-%%=========================================================
-% RIEMANNIAN DISTANCE MATRIX
-%%=========================================================
+    %% -------------------------
+    % STEP 6: VARIABILITY METRICS
+    %% -------------------------
 
-DRiem=zeros(NTrials);
+    mu_f  = mean(f_est,1);
+    var_f = var(f_est,0,1);
 
-for ITrial=1:NTrials
+    H = zeros(1,nWin);
+    KL = zeros(1,nWin);
 
-    C1=Covs(:,:,ITrial);
+    p0 = p(:,1) + eps;
+    p0 = p0 / sum(p0);
 
-    for JTrial=1:NTrials
+    for w = 1:nWin
 
-        C2=Covs(:,:,JTrial);
+        pw = p(:,w) + eps;
+        pw = pw / sum(pw);
 
-        EigVals=eig(C1\C2);
+        % entropy
+        H(w) = -sum(pw .* log(pw));
 
-        DRiem(ITrial,JTrial)=sqrt(sum(log(EigVals).^2));
+        % KL divergence vs baseline
+        KL(w) = sum(pw .* log(pw ./ p0));
 
     end
-end
+
+    %% -------------------------
+    % STEP 7: VISUALIZATION
+    %% -------------------------
+
+    time = linspace(-2,0,nWin);
+
+    figure;
+    plot(time, mu_f, 'LineWidth', 2);
+    xlabel('Time (s)'); ylabel('Frequency (Hz)');
+    title('Mean Beta Frequency Across Trials');
+
+    figure;
+    plot(time, var_f, 'LineWidth', 2);
+    xlabel('Time (s)'); ylabel('Variance');
+    title('Inter-Trial Frequency Variability');
+
+    figure;
+    plot(time, H, 'LineWidth', 2);
+    xlabel('Time (s)'); ylabel('Entropy');
+    title('Distribution Entropy');
+
+    figure;
+    plot(time, KL, 'LineWidth', 2);
+    xlabel('Time (s)'); ylabel('KL Divergence vs Baseline');
+    title('Distribution Shift Over Time');
+
+    figure;
+    imagesc(time, fgrid_pdf, p);
+    axis xy;
+    xlabel('Time (s)');
+    ylabel('Frequency (Hz)');
+    title('p(f | t) Across Trials');
+    colorbar;
 
 
-%%=========================================================
-% MANIFOLD VISUALIZATION
-%%=========================================================
-% enforce symmetry
-DGrass=(DGrass+DGrass')/2;
+    %%
+    %%
+    %%=========================================================
+    % BETA FILTER
+    %%=========================================================
+    %EEG -> [NTrials x NChannels x NTimes]
+    EEGDat=permute(EEG_epoched.data,[3,1,2]);
+    [NTrials,NChannels,NTimes]=size(EEGDat);
+    Fs=EEG_epoched.srate;
+    BetaBand=[13,36];
+    NComponents=3;
+    [B,A]=butter(4,BetaBand/(EEG_epoched.srate/2),'bandpass');
+    NTrails=size(EEG_epoched,3);
+    EEGBeta=zeros(size(EEGDat));
 
-% enforce diagonal = 0
-for ITrial=1:NTrials
-    DGrass(ITrial,ITrial)=0;
-end
+    for ITrial=1:NTrials
 
-% remove NaN / Inf
-DGrass(~isfinite(DGrass))=0;
+        Trial=double(squeeze(EEGDat(ITrial,:,:)));
 
-% ensure non-negative
-DGrass(DGrass<0)=0;
+        EEGBeta(ITrial,:,:)=filtfilt(B,A,Trial')';
 
-% optional: enforce double precision
-DGrass=double(DGrass);
-Y=mdscale(DGrass,2);
+    end
 
-figure;
+    %%=========================================================
+    % SINGLE-TRIAL COVARIANCE
+    %%=========================================================
 
-scatter(Y(:,1),Y(:,2),80,'filled');
+    Covs=zeros(NChannels,NChannels,NTrials);
 
-xlabel('Dim 1');
-ylabel('Dim 2');
+    for ITrial=1:NTrials
 
-title('Beta Subspace Geometry');
+        X=squeeze(EEGBeta(ITrial,:,:));
 
-grid on;
+        C=cov(X');
 
+        % regularization
+        C=C+1e-6*eye(size(C));
 
-%%=========================================================
-% CLUSTERING
-%%=========================================================
+        Covs(:,:,ITrial)=C;
 
-NClusters=3;
-
-ClusterIdx=kmeans(Y,NClusters);
-
-figure;
-
-gscatter(Y(:,1),Y(:,2),ClusterIdx);
-
-xlabel('Dim 1');
-ylabel('Dim 2');
-
-title('Beta State Clusters');
-
-grid on;
+    end
 
 
-%%=========================================================
-% INTER-TRIAL VARIABILITY
-%%=========================================================
+    %%=========================================================
+    % SUBSPACE EXTRACTION
+    %%=========================================================
 
-Variability=mean(DGrass,2);
+    Subspaces=cell(NTrials,1);
 
-figure;
+    for ITrial=1:NTrials
 
-plot(Variability,'LineWidth',2);
+        C=Covs(:,:,ITrial);
 
-xlabel('Trial');
+        [V,D]=eig(C);
 
-ylabel('Variability');
+        [~,Idx]=sort(diag(D),'descend');
 
-title('Inter-Trial Beta Variability');
+        V=V(:,Idx);
 
-grid on;
+        U=V(:,1:NComponents);
 
+        Subspaces{ITrial}=U;
 
-%%=========================================================
-% ROOT-MUSIC PER TRIAL
-%%=========================================================
-
-BetaPeaks=zeros(NTrials,1);
-
-for ITrial=1:NTrials
-
-    X=squeeze(EEGBeta(ITrial,3,:));
-
-    [S,F]=pmusic(X,4,[],Fs);
-
-    BetaIdx=find(F>=15 & F<=30);
-
-    [~,MaxIdx]=max(S(BetaIdx));
-
-    BetaPeaks(ITrial)=F(BetaIdx(MaxIdx));
-
-end
+    end
 
 
-figure;
+    %%=========================================================
+    % GRASSMANN DISTANCE MATRIX
+    %%=========================================================
 
-histogram(BetaPeaks);
+    DGrass=zeros(NTrials);
 
-xlabel('Beta Peak Frequency');
+    for ITrial=1:NTrials
 
-ylabel('Count');
+        U1=Subspaces{ITrial};
 
-title('Trial-wise Beta Peaks');
+        for JTrial=1:NTrials
 
-   %%CCA
+            U2=Subspaces{JTrial};
+
+            Angle=subspace(U1,U2);
+
+            DGrass(ITrial,JTrial)=Angle;
+
+        end
+    end
+
+
+    %%=========================================================
+    % RIEMANNIAN DISTANCE MATRIX
+    %%=========================================================
+
+    DRiem=zeros(NTrials);
+
+    for ITrial=1:NTrials
+
+        C1=Covs(:,:,ITrial);
+
+        for JTrial=1:NTrials
+
+            C2=Covs(:,:,JTrial);
+
+            EigVals=eig(C1\C2);
+
+            DRiem(ITrial,JTrial)=sqrt(sum(log(EigVals).^2));
+
+        end
+    end
+
+
+    %%=========================================================
+    % MANIFOLD VISUALIZATION
+    %%=========================================================
+    % enforce symmetry
+    DGrass=(DGrass+DGrass')/2;
+
+    % enforce diagonal = 0
+    for ITrial=1:NTrials
+        DGrass(ITrial,ITrial)=0;
+    end
+
+    % remove NaN / Inf
+    DGrass(~isfinite(DGrass))=0;
+
+    % ensure non-negative
+    DGrass(DGrass<0)=0;
+
+    % optional: enforce double precision
+    DGrass=double(DGrass);
+    Y=mdscale(DGrass,2);
+
+    figure;
+
+    scatter(Y(:,1),Y(:,2),80,'filled');
+
+    xlabel('Dim 1');
+    ylabel('Dim 2');
+
+    title('Beta Subspace Geometry');
+
+    grid on;
+
+
+    %%=========================================================
+    % CLUSTERING
+    %%=========================================================
+
+    NClusters=3;
+
+    ClusterIdx=kmeans(Y,NClusters);
+
+    figure;
+
+    gscatter(Y(:,1),Y(:,2),ClusterIdx);
+
+    xlabel('Dim 1');
+    ylabel('Dim 2');
+
+    title('Beta State Clusters');
+
+    grid on;
+
+
+    %%=========================================================
+    % INTER-TRIAL VARIABILITY
+    %%=========================================================
+
+    Variability=mean(DGrass,2);
+
+    figure;
+
+    plot(Variability,'LineWidth',2);
+
+    xlabel('Trial');
+
+    ylabel('Variability');
+
+    title('Inter-Trial Beta Variability');
+
+    grid on;
+
+
+    %%=========================================================
+    % ROOT-MUSIC PER TRIAL
+    %%=========================================================
+
+    BetaPeaks=zeros(NTrials,1);
+
+    for ITrial=1:NTrials
+
+        X=squeeze(EEGBeta(ITrial,3,:));
+
+        [S,F]=pmusic(X,4,[],Fs);
+
+        BetaIdx=find(F>=15 & F<=30);
+
+        [~,MaxIdx]=max(S(BetaIdx));
+
+        BetaPeaks(ITrial)=F(BetaIdx(MaxIdx));
+
+    end
+
+
+    figure;
+
+    histogram(BetaPeaks);
+
+    xlabel('Beta Peak Frequency');
+
+    ylabel('Count');
+
+    title('Trial-wise Beta Peaks');
+
+    %%CCA
 
     EEGdata(f,:,:,1:size(EEG_epoched.data,3)) =  EEG_epoched.data;
     % apply bad trial indices
